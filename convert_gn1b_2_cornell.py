@@ -37,8 +37,8 @@ def run(args):
                 rect_grasps = rect_grasps[:n]
                 corners = rect_grasps.get_all_rect_corners()    # (n, 8)
                 corners = corners.reshape(-1, 2) # (n * 4, 2)
-                # write it into file, 
-                dir = os.path.join(graspnet_root, 'rect_labels_cornell', f'scene_{str(scene_id).zfill(4)}', camera)
+                # write it into file,
+                dir = os.path.join(graspnet_root, 'scenes', f'scene_{str(scene_id).zfill(4)}', camera, 'rect_cornell')
                 ensure_dir(dir)
                 saved_path = os.path.join(dir, f'{str(ann_id).zfill(4)}.txt')
                 print(saved_path)
