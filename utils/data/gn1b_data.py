@@ -1,0 +1,88 @@
+"""
+来自GraspNet-1Billion数据集
+"""
+
+import logging
+import os
+import glob
+
+import torch
+import torch.utils.data
+from graspnetAPI import GraspNet
+
+from .cornell_data import CornellDataset
+
+from utils.dataset_processing import grasp, image
+
+graspnet_root = '/share/home/ryan/datasets/graspnet-1billion'
+
+
+class GraspNet1BDataset(CornellDataset):
+
+    def __init__(self, graspnet_root, camera='realsense', split='train', **kwargs):
+        super(GraspNet1BDataset, self).__init__(**kwargs)
+        logging.info('Graspnet root = {}'.format(graspnet_root))
+        logging.info('Using data from camera {}'.format(camera))
+        self.graspnet_root = graspnet_root
+        self.camera = camera
+        self.split = split
+
+        self._graspnet_instance = GraspNet(graspnet_root, camera, split)
+
+        self.g_rgb_files = self._graspnet_instance.rgbPath  # 存放rgb的路径
+        self.g_depth_files = self._graspnet_instance.depthPath  # 存放深度图的路径
+        self.g_rect_files = []  # 存放抓取标签的路径
+        
+        for original_rect_grasp_file in self._graspnet_instance.rectLabelPath:
+            self.g_rect_files.append(
+                original_rect_grasp_file
+                .replace('rect', 'rect_cornell')
+                .replace('.npy', '.txt')
+            )
+
+        logging.info('Graspnet 1Billion dataset created!!')
+
+    def _get_crop_attrs(self, idx):
+        gtbbs = grasp.GraspRectangles.load_from_cornell_file(self.g_rect_files[idx])
+        center = gtbbs.center
+        left = max(0, min(center[1] - self.output_size // 2, 640 - self.output_size))
+        top = max(0, min(center[0] - self.output_size // 2, 360 - self.output_size))
+        return center, left, top
+
+    def get_gtbb(self, idx, rot=0, zoom=1):
+        gtbbs = grasp.GraspRectangles.load_from_cornell_file(self.g_rect_files[idx], scale=2.0)
+        center, left, top = self._get_crop_attrs(idx)
+        gtbbs.rotate(rot, center)
+        gtbbs.offset((-top, -left))
+        gtbbs.zoom(zoom, (self.output_size//2, self.output_size//2))
+        return gtbbs
+
+    def get_depth(self, idx, rot=0, zoom=1.0):
+        # graspnet 1b中的深度图单位转换成m
+        depth_img = image.DepthImage.from_tiff(self.g_depth_files[idx], depth_scale=1000.0)
+        # 读入的是wxh=1280x720 resize成640x360
+        depth_img.resize((360, 640))
+        center, left, top = self._get_crop_attrs(idx)
+        depth_img.rotate(rot, center)
+        depth_img.crop((top, left), (min(360, top + self.output_size), min(640, left + self.output_size)))
+        depth_img.normalise()
+        depth_img.zoom(zoom)
+        depth_img.resize((self.output_size, self.output_size))
+        return depth_img.img
+
+    def get_rgb(self, idx, rot=0, zoom=1.0, normalise=True):
+        rgb_img = image.Image.from_file(self.g_rgb_files[idx])
+        # 读入的是wxh=1280x720 resize成640x360
+        rgb_img.resize((360, 640))
+        center, left, top = self._get_crop_attrs(idx)
+        rgb_img.rotate(rot, center)
+        rgb_img.crop((top, left), (min(360, top + self.output_size), min(640, left + self.output_size)))
+        rgb_img.zoom(zoom)
+        rgb_img.resize((self.output_size, self.output_size))
+        if normalise:
+            rgb_img.normalise()
+            rgb_img.img = rgb_img.img.transpose((2, 0, 1))
+        return rgb_img.img
+
+    def __len__(self):
+        return len(self.g_rect_files)

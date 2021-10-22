@@ -1,0 +1,14 @@
+.idea
+__pycache__
+tensorboard
+output
+/models
+/data
+*.zip
+*.pyc
+/ggcnn_weights_cornell
+/.python-version
+slurm_log
+*.jpg
+*.slurm
+dev.py
