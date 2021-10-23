@@ -6,7 +6,7 @@ from .dla_models import *
 
 
 class GGCNN3(nn.Module):
-    def __init__(self, input_channels=1, backend='dla34up'):
+    def __init__(self, input_channels=1, backend='dla60up'):
         super().__init__()
 
         self.features = dlaup_func_dict[backend](16, input_channels=input_channels)

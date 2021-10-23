@@ -41,8 +41,15 @@ def parse_args():
     parser.add_argument('--split', type=float, default=0.9, help='Fraction of data for training (remainder is validation)')
     parser.add_argument('--ds-rotate', type=float, default=0.0,
                         help='Shift the start point of the dataset to use a different test/train split for cross validation.')
+    parser.add_argument('--output-size', type=int, default=300,
+                        help='the output size of the network, determining the cropped size of dataset images')
+
     parser.add_argument('--camera', type=str, default='realsense',
                         help='Which camera\'s data to use, only effective when using graspnet1b dataset')
+    parser.add_argument('--scale', type=int, default=1, 
+                        help='the scale factor for the original images, only effective when using graspnet1b dataset')                        
+    parser.add_argument('--ggcnn3backend', type=str, default='dla60up', 
+                        help='the backbone for GGCNN3, only effective when using GGCNN3 network')
     parser.add_argument('--num-workers', type=int, default=8, help='Dataset workers')
     parser.add_argument('--device', type=int, default=0, help='the gpu device number, starting from 0')
 
@@ -207,10 +214,12 @@ def run():
     Dataset = get_dataset(args.dataset)
 
     train_dataset = Dataset(args.dataset_path, start=0.0, end=args.split, ds_rotate=args.ds_rotate,
+                            output_size=args.output_size,
                             random_rotate=True, random_zoom=True,
                             include_depth=args.use_depth, 
                             include_rgb=args.use_rgb,
-                            camera=args.camera)
+                            camera=args.camera,
+                            scale=args.scale)
     train_data = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -218,14 +227,17 @@ def run():
         num_workers=args.num_workers,
         pin_memory=True
     )
+
     val_dataset = Dataset(args.dataset_path, start=args.split, end=1.0, ds_rotate=args.ds_rotate,
-                          random_rotate=True, random_zoom=True,
-                          include_depth=args.use_depth, 
-                          include_rgb=args.use_rgb,
-                          camera=args.camera)
+                        output_size=args.output_size,
+                        random_rotate=True, random_zoom=True,
+                        include_depth=args.use_depth, 
+                        include_rgb=args.use_rgb,
+                        camera=args.camera,
+                        scale=args.scale)
     val_data = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=1,
+        batch_size=8,
         shuffle=False,
         num_workers=args.num_workers // 2,
         pin_memory=True
@@ -235,11 +247,13 @@ def run():
 
     # Load the network
     logging.info('Loading Network...')
-    input_channels = 1*args.use_depth + 3*args.use_rgb
+    input_channels = 1 * args.use_depth + 3 * args.use_rgb
     ggcnn = get_network(args.network)
 
-    net = ggcnn(input_channels=input_channels)
-    
+    if args.network == 'ggcnn3':
+        net = ggcnn(input_channels=input_channels, backend=args.ggcnn3backend)
+    else:
+        net = ggcnn(input_channels=input_channels)
     device = torch.device("cuda:0")
     net = net.to(device)
     optimizer = optim.Adam(net.parameters())
@@ -247,12 +261,23 @@ def run():
     logging.info('Done')
 
     # Print model architecture.
-    summary(net, (input_channels, 300, 300))
-    f = open(os.path.join(save_folder, 'arch.txt'), 'w')
-    sys.stdout = f
-    summary(net, (input_channels, 300, 300))
-    sys.stdout = sys.__stdout__
-    f.close()
+    with open(os.path.join(save_folder, 'arch.txt'), 'w') as f:
+        try:
+            summary(net, (input_channels, args.output_size, args.output_size))
+            sys.stdout = f
+            summary(net, (input_channels, args.output_size, args.output_size))
+            sys.stdout = sys.__stdout__
+        except Exception as e:
+            logging.warning('Summarizing the model architecture failed, no arch.txt will not be saved.')
+            # when error occured, hooks may still be there
+            if args.network == 'ggcnn3':
+                net = ggcnn(input_channels=input_channels, backend=args.ggcnn3backend)
+            else:
+                net = ggcnn(input_channels=input_channels)
+            device = torch.device("cuda:0")
+            net = net.to(device)
+            optimizer = optim.Adam(net.parameters())
+            scheduler = optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=0.95)
 
     best_iou = 0.0
     for epoch in range(args.epochs):

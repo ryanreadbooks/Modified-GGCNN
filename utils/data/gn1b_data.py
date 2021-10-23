@@ -19,13 +19,14 @@ graspnet_root = '/share/home/ryan/datasets/graspnet-1billion'
 
 class GraspNet1BDataset(CornellDataset):
 
-    def __init__(self, graspnet_root, camera='realsense', split='train', **kwargs):
+    def __init__(self, graspnet_root, camera='realsense', split='train', scale=2.0, **kwargs):
         super(GraspNet1BDataset, self).__init__(**kwargs)
         logging.info('Graspnet root = {}'.format(graspnet_root))
         logging.info('Using data from camera {}'.format(camera))
         self.graspnet_root = graspnet_root
         self.camera = camera
         self.split = split
+        self.scale = scale  # 原图是hxw=720x1280，scale将原图缩小scale倍
 
         self._graspnet_instance = GraspNet(graspnet_root, camera, split)
 
@@ -43,28 +44,29 @@ class GraspNet1BDataset(CornellDataset):
         logging.info('Graspnet 1Billion dataset created!!')
 
     def _get_crop_attrs(self, idx):
-        gtbbs = grasp.GraspRectangles.load_from_cornell_file(self.g_rect_files[idx])
+        gtbbs = grasp.GraspRectangles.load_from_cornell_file(self.g_rect_files[idx], scale=self.scale)
         center = gtbbs.center
-        left = max(0, min(center[1] - self.output_size // 2, 640 - self.output_size))
-        top = max(0, min(center[0] - self.output_size // 2, 360 - self.output_size))
+        left = max(0, min(center[1] - self.output_size // 2, int(1280 // self.scale) - self.output_size))
+        top = max(0, min(center[0] - self.output_size // 2, int(720 // self.scale) - self.output_size))
         return center, left, top
 
     def get_gtbb(self, idx, rot=0, zoom=1):
-        gtbbs = grasp.GraspRectangles.load_from_cornell_file(self.g_rect_files[idx], scale=2.0)
+        gtbbs = grasp.GraspRectangles.load_from_cornell_file(self.g_rect_files[idx], scale=self.scale)
         center, left, top = self._get_crop_attrs(idx)
         gtbbs.rotate(rot, center)
         gtbbs.offset((-top, -left))
-        gtbbs.zoom(zoom, (self.output_size//2, self.output_size//2))
+        gtbbs.zoom(zoom, (self.output_size // 2, self.output_size // 2))
         return gtbbs
 
     def get_depth(self, idx, rot=0, zoom=1.0):
         # graspnet 1b中的深度图单位转换成m
         depth_img = image.DepthImage.from_tiff(self.g_depth_files[idx], depth_scale=1000.0)
-        # 读入的是wxh=1280x720 resize成640x360
-        depth_img.resize((360, 640))
+        rh, rw = int(720 // self.scale), int(1280 // self.scale)
+        # 读入的是wxh=1280x720 resize成目标尺寸
+        depth_img.resize((rh, rw))
         center, left, top = self._get_crop_attrs(idx)
         depth_img.rotate(rot, center)
-        depth_img.crop((top, left), (min(360, top + self.output_size), min(640, left + self.output_size)))
+        depth_img.crop((top, left), (min(rh, top + self.output_size), min(rw, left + self.output_size)))
         depth_img.normalise()
         depth_img.zoom(zoom)
         depth_img.resize((self.output_size, self.output_size))
@@ -72,11 +74,12 @@ class GraspNet1BDataset(CornellDataset):
 
     def get_rgb(self, idx, rot=0, zoom=1.0, normalise=True):
         rgb_img = image.Image.from_file(self.g_rgb_files[idx])
-        # 读入的是wxh=1280x720 resize成640x360
-        rgb_img.resize((360, 640))
+        rh, rw = int(720 // self.scale), int(1280 // self.scale)
+        # 读入的是wxh=1280x720 resize成目标尺寸
+        rgb_img.resize((rh, rw))
         center, left, top = self._get_crop_attrs(idx)
         rgb_img.rotate(rot, center)
-        rgb_img.crop((top, left), (min(360, top + self.output_size), min(640, left + self.output_size)))
+        rgb_img.crop((top, left), (min(rh, top + self.output_size), min(rw, left + self.output_size)))
         rgb_img.zoom(zoom)
         rgb_img.resize((self.output_size, self.output_size))
         if normalise:
