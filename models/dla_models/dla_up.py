@@ -29,6 +29,7 @@ def fill_up_weights(up):
             w[:, 0, i, j] = \
                 (1 - math.fabs(i / f - c)) * (1 - math.fabs(j / f - c))
 
+
 class IDAUp(nn.Module):
     def __init__(self, node_kernel, out_dim, channels, up_factors):
         super(IDAUp, self).__init__()
@@ -116,12 +117,12 @@ class DLAUp(nn.Module):
 
 class DLASeg(nn.Module):
     def __init__(self, base_name, classes,
-                 pretrained_base=None, down_ratio=2):
+                 pretrained_base=None, down_ratio=2, **kwargs):
         super(DLASeg, self).__init__()
         assert down_ratio in [2, 4, 8, 16]
         self.first_level = int(np.log2(down_ratio))
-        self.base = dla__dict__[base_name](pretrained=pretrained_base,
-                                            return_levels=True)
+        self.base = dla_func_dict[base_name](pretrained=pretrained_base,
+                                             return_levels=True, **kwargs)
         channels = self.base.channels
         scales = [2 ** i for i in range(len(channels[self.first_level:]))]
         self.dla_up = DLAUp(channels[self.first_level:], scales=scales)
@@ -140,7 +141,6 @@ class DLASeg(nn.Module):
         else:
             up = Identity()
         self.up = up
-        self.softmax = nn.LogSoftmax(dim=1)
 
         for m in self.fc.modules():
             if isinstance(m, nn.Conv2d):
@@ -153,18 +153,9 @@ class DLASeg(nn.Module):
     def forward(self, x):
         x = self.base(x)
         x = self.dla_up(x[self.first_level:])
-        print(x.shape)
         x = self.fc(x)
-        y = self.softmax(self.up(x))
-        return y, x
-
-    def optim_parameters(self, memo=None):
-        for param in self.base.parameters():
-            yield param
-        for param in self.dla_up.parameters():
-            yield param
-        for param in self.fc.parameters():
-            yield param
+        x = self.up(x)
+        return x
 
 
 def dla34up(classes, pretrained_base=None, **kwargs):
@@ -187,3 +178,11 @@ def dla169up(classes, pretrained_base=None, **kwargs):
     model = DLASeg('dla169', classes,
                    pretrained_base=pretrained_base, **kwargs)
     return model
+
+
+dlaup_func_dict = {
+    'dla34up': dla34up,
+    'dla60up': dla60up,
+    'dla102up': dla102up,
+    'dla169up': dla169up
+}

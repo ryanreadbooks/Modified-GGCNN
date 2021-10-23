@@ -42,7 +42,6 @@ class BasicBlock(nn.Module):
 
         out = self.conv2(out)
         out = self.bn2(out)
-
         out += residual
         out = self.relu(out)
 
@@ -214,13 +213,13 @@ class Tree(nn.Module):
 class DLA(nn.Module):
     def __init__(self, levels, channels, num_classes=1000,
                  block=BasicBlock, residual_root=False, return_levels=False,
-                 pool_size=7, linear_root=False):
+                 pool_size=7, linear_root=False, input_channels=3):
         super(DLA, self).__init__()
         self.channels = channels
         self.return_levels = return_levels
         self.num_classes = num_classes
         self.base_layer = nn.Sequential(
-            nn.Conv2d(3, channels[0], kernel_size=7, stride=1,
+            nn.Conv2d(input_channels, channels[0], kernel_size=7, stride=1,
                       padding=3, bias=False),
             BatchNorm(channels[0]),
             nn.ReLU(inplace=True))
@@ -390,7 +389,7 @@ def dla169(pretrained=None, **kwargs):  # DLA-169
     return model
 
 
-dla__dict__ = {
+dla_func_dict = {
     'dla34': dla34,
     'dla46_c': dla46_c,
     'dla46x_c': dla46x_c,

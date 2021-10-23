@@ -9,6 +9,7 @@ output
 /.python-version
 slurm_log
 *.jpg
+*.png
 *.slurm
 dev*
 move_rect_to_scenes.py

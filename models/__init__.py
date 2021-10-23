@@ -2,6 +2,7 @@ from .dla_models import *
 from .common import *
 from .ggcnn import *
 from .ggcnn2 import *
+from .ggcnn3 import *
 
 
 def get_network(network_name):
