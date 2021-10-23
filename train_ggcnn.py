@@ -243,6 +243,7 @@ def run():
     device = torch.device("cuda:0")
     net = net.to(device)
     optimizer = optim.Adam(net.parameters())
+    scheduler = optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=0.95)
     logging.info('Done')
 
     # Print model architecture.
@@ -258,7 +259,8 @@ def run():
         st = time.time()
         logging.info('Beginning Epoch {:02d}'.format(epoch))
         train_results = train(epoch, net, device, train_data, optimizer, args.batches_per_epoch, vis=args.vis)
-
+        scheduler.step()
+        
         # Log training losses to tensorboard
         tb.add_scalar('loss/train_loss', train_results['loss'], epoch)
         for n, l in train_results['losses'].items():
