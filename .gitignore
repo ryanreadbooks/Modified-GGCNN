@@ -2,7 +2,6 @@
 __pycache__
 tensorboard
 output
-/models
 /data
 *.zip
 *.pyc
@@ -10,6 +9,7 @@ output
 /.python-version
 slurm_log
 *.jpg
+*.png
 *.slurm
-dev.py
+dev*
 move_rect_to_scenes.py
