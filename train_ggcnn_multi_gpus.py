@@ -1,8 +1,10 @@
+"""
+written by ryanreadbooks
+date: 2021/10/23
+"""
+
 import datetime
-from email.policy import default
 import os
-from pickle import TRUE
-from posixpath import split
 import sys
 import argparse
 import logging
@@ -13,23 +15,28 @@ import cv2
 import torch
 import torch.utils.data
 import torch.optim as optim
+import torch.distributed
 
 from torchsummary import summary
-
 
 import tensorboardX
 
 from utils.visualisation.gridshow import gridshow
 
 from utils.dataset_processing import evaluation
-from utils.data import get_dataset  
+from utils.data import get_dataset
 from models import get_network
 from models.common import post_process_output
 
 logging.basicConfig(level=logging.INFO)
 
-def parse_args():
 
+def logout(msg):
+    if args.local_rank == 0:
+        logging.info(msg)
+
+
+def parse_args():
     parser = argparse.ArgumentParser(description='Train GG-CNN')
 
     # Network
@@ -66,6 +73,10 @@ def parse_args():
     parser.add_argument('--logdir', type=str, default='tensorboard/', help='Log directory')
     parser.add_argument('--vis', action='store_true', help='Visualise the training process')
 
+    # multi gpus training settings
+    parser.add_argument('--devices', type=str, default='0',
+                        help="the gpu device number, starting from 0, separate with ','")
+    parser.add_argument('--local_rank', type=int, default=-1, help='do not explicitly specify this parameter')
     args = parser.parse_args()
     return args
 
@@ -106,11 +117,11 @@ def validate(net, device, val_data, batches_per_epoch):
 
                 loss = lossd['loss']
 
-                results['loss'] += loss.item()/ld
+                results['loss'] += loss.item() / ld
                 for ln, l in lossd['losses'].items():
                     if ln not in results['losses']:
                         results['losses'][ln] = 0
-                    results['losses'][ln] += l.item()/ld
+                    results['losses'][ln] += l.item() / ld
 
                 q_out, ang_out, w_out = post_process_output(lossd['pred']['pos'], lossd['pred']['cos'],
                                                             lossd['pred']['sin'], lossd['pred']['width'])
@@ -153,11 +164,10 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
     # Use batches per epoch to make training on different sized datasets (cornell/jacquard) more equivalent.
     while batch_idx < batches_per_epoch:
         for x, y, _, _, _ in train_data:
-            st = time.time()
             batch_idx += 1
             if batch_idx >= batches_per_epoch:
                 break
-            
+
             xc = x.to(device)
             yc = [yy.to(device) for yy in y]
             lossd = net.compute_loss(xc, yc)
@@ -165,7 +175,7 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
             loss = lossd['loss']
 
             if batch_idx % 100 == 0:
-                logging.info('Epoch: {}, Batch: {}, Loss: {:0.4f}, Spent {:0.4f}s'.format(epoch, batch_idx, loss.item(), time.time() - st))
+                logout('Epoch: {}, Batch: {}, Loss: {:0.4f}'.format(epoch, batch_idx, loss.item()))
 
             results['loss'] += loss.item()
             for ln, l in lossd['losses'].items():
@@ -197,61 +207,63 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
 
 
 def run():
-    args = parse_args()
-
     # Vis window
     if args.vis:
         cv2.namedWindow('Display', cv2.WINDOW_NORMAL)
 
-    # Set-up output directories
-    dt = datetime.datetime.now().strftime('%y%m%d_%H%M')
-    net_desc = '{}_{}'.format(dt, '_'.join(args.description.split()))
+    if args.local_rank == 0:
+        # Set-up output directories
+        dt = datetime.datetime.now().strftime('%y%m%d_%H%M')
+        net_desc = '{}_{}'.format(dt, '_'.join(args.description.split()))
 
-    save_folder = os.path.join(args.outdir, net_desc)
-    if not os.path.exists(save_folder):
-        os.makedirs(save_folder)
-    tb = tensorboardX.SummaryWriter(os.path.join(args.logdir, net_desc))
+        save_folder = os.path.join(args.outdir, net_desc)
+        if not os.path.exists(save_folder):
+            os.makedirs(save_folder)
+        tb = tensorboardX.SummaryWriter(os.path.join(args.logdir, net_desc))
 
     # Load Dataset
-    logging.info('Loading {} Dataset...'.format(args.dataset.title()))
-    Dataset = get_dataset(args.dataset)
+    logout('Loading {} Dataset...'.format(args.dataset.title()))
 
+    Dataset = get_dataset(args.dataset)
     train_dataset = Dataset(args.dataset_path, start=0.0, end=args.split, ds_rotate=args.ds_rotate,
                             output_size=args.output_size,
                             random_rotate=True, random_zoom=True,
                             include_depth=args.use_depth, 
                             include_rgb=args.use_rgb,
                             camera=args.camera,
-                            scale=args.scale,
-                            split='train')
+                            scale=args.scale)
+
+    train_sampler = torch.utils.data.DistributedSampler(train_dataset)
+
     train_data = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=True
+        pin_memory=True,
+        sampler=train_sampler
     )
 
-    val_dataset = Dataset(args.dataset_path, start=args.split, end=1.0, ds_rotate=args.ds_rotate,
-                        output_size=args.output_size,
-                        random_rotate=True, random_zoom=True,
-                        include_depth=args.use_depth, 
-                        include_rgb=args.use_rgb,
-                        camera=args.camera,
-                        scale=args.scale,
-                        split='test_seen')
-    val_data = torch.utils.data.DataLoader(
-        val_dataset,
-        batch_size=1,   # do not modify
-        shuffle=True,
-        num_workers=args.num_workers // 2,
-        pin_memory=True
-    )
-    logging.info(f'len of trainloader = {len(train_data)}, len of evalloader = {len(val_data)}')
-    logging.info('Done')
+    if args.local_rank == 0:
+        val_dataset = Dataset(args.dataset_path, start=args.split, end=1.0, ds_rotate=args.ds_rotate,
+                            output_size=args.output_size,
+                            random_rotate=True, random_zoom=True,
+                            include_depth=args.use_depth, 
+                            include_rgb=args.use_rgb,
+                            camera=args.camera,
+                            scale=args.scale)
+        val_data = torch.utils.data.DataLoader(
+            val_dataset,
+            batch_size=1,   # do not modify
+            shuffle=False,
+            num_workers=args.num_workers // 2,
+            pin_memory=True
+        )
+    
+        logout(f'len of train loader = {len(train_data)}, len of eval loader = {len(val_data)}')
+    logout('Done')
 
     # Load the network
-    logging.info('Loading Network...')
+    logout('Loading Network...')
     input_channels = 1 * args.use_depth + 3 * args.use_rgb
     ggcnn = get_network(args.network)
 
@@ -259,44 +271,74 @@ def run():
         net = ggcnn(input_channels=input_channels, backend=args.ggcnn3backend)
     else:
         net = ggcnn(input_channels=input_channels)
-    device = torch.device("cuda:{}".format(args.device))
+
+    devices = list(map(int, args.devices.split(',')))
+    device = torch.device("cuda:{}".format(devices[args.local_rank]))
+    
+    torch.distributed.init_process_group(backend='nccl')
+    torch.cuda.set_device(device=device)
     net = net.to(device)
+    net = torch.nn.parallel.DistributedDataParallel(net, device_ids=[device], output_device=device)
+    net = net.module
     optimizer = optim.Adam(net.parameters())
-    scheduler = optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=0.98)
-    logging.info('Done')
+    scheduler = optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=0.95)
+    logout('Done')
 
     best_iou = 0.0
     for epoch in range(args.epochs):
         st = time.time()
-        logging.info('Beginning Epoch {:02d}'.format(epoch))
+        logout('Beginning Epoch {:02d}'.format(epoch))
+        train_sampler.set_epoch(epoch=epoch)
         train_results = train(epoch, net, device, train_data, optimizer, args.batches_per_epoch, vis=args.vis)
         scheduler.step()
-        
-        # Log training losses to tensorboard
-        tb.add_scalar('loss/train_loss', train_results['loss'], epoch)
-        for n, l in train_results['losses'].items():
-            tb.add_scalar('train_loss/' + n, l, epoch)
 
         # Run Validation
-        logging.info('Validating...')
-        test_results = validate(net, device, val_data, args.val_batches)
-        logging.info('%d/%d = %f' % (test_results['correct'], test_results['correct'] + test_results['failed'],
-                                     test_results['correct']/(test_results['correct']+test_results['failed'])))
+        if args.local_rank == 0:
+            logging.info('Validating...')
+            test_results = validate(net, device, val_data, args.val_batches)
 
-        # Log validation results to tensorbaord
-        tb.add_scalar('loss/IOU', test_results['correct'] / (test_results['correct'] + test_results['failed']), epoch)
-        tb.add_scalar('loss/val_loss', test_results['loss'], epoch)
-        for n, l in test_results['losses'].items():
-            tb.add_scalar('val_loss/' + n, l, epoch)
+        if args.local_rank == 0:
+            # Log training losses to tensorboard
+            tb.add_scalar('loss/train_loss', train_results['loss'], epoch)
+            for n, l in train_results['losses'].items():
+                tb.add_scalar('train_loss/' + n, l, epoch)
+            logging.info('%d/%d = %f' % (test_results['correct'], test_results['correct'] + test_results['failed'],
+                                         test_results['correct'] / (test_results['correct'] + test_results['failed'])))
+
+            logging.info('%d/%d = %f' % (test_results['correct'], test_results['correct'] + test_results['failed'],
+                                         test_results['correct'] / (test_results['correct'] + test_results['failed'])))
+
+            # Log validation results to tensorbaord
+            tb.add_scalar('loss/IOU', test_results['correct'] / (test_results['correct'] + test_results['failed']), epoch)
+            tb.add_scalar('loss/val_loss', test_results['loss'], epoch)
+            for n, l in test_results['losses'].items():
+                tb.add_scalar('val_loss/' + n, l, epoch)
 
         # Save best performing network
         iou = test_results['correct'] / (test_results['correct'] + test_results['failed'])
         if iou > best_iou or epoch == 0 or (epoch % 10) == 0:
-            torch.save(net, os.path.join(save_folder, 'epoch_%02d_iou_%0.2f' % (epoch, iou)))
-            torch.save(net.state_dict(), os.path.join(save_folder, 'epoch_%02d_iou_%0.2f_statedict.pt' % (epoch, iou)))
+            if args.local_rank == 0:
+                torch.save(net, os.path.join(save_folder, 'epoch_%02d_iou_%0.2f' % (epoch, iou)))
+                torch.save(net.state_dict(), os.path.join(save_folder, 'epoch_%02d_iou_%0.2f_statedict.pt' % (epoch, iou)))
             best_iou = iou
         et = time.time()
-        logging.info(f'Epoch-{epoch} took time {et - st} s')
+        logout(f'Epoch-{epoch} took time {et - st} s')
+
 
 if __name__ == '__main__':
+    """
+    Usage:
+    python -m torch.distributed.launch --nproc_per_node 2 \
+        train_ggcnn_multi_gpus.py --network ggcnn \
+        --dataset graspnet1b \
+        --dataset-path /share/home/ryan/datasets/graspnet-1billion/ \
+        --epochs 2 \
+        --batch-size 16 \
+        --num-workers 20 \
+        --description ggcnn3_gn1b_o384_multi \
+        --output-size 384 
+        --scale 1 \
+        --devices 0,1
+    """
+    args = parse_args()
     run()
