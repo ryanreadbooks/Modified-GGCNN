@@ -1,6 +1,8 @@
 import datetime
 from email.policy import default
 import os
+from pickle import TRUE
+from posixpath import split
 import sys
 import argparse
 import logging
@@ -14,20 +16,19 @@ import torch.optim as optim
 
 from torchsummary import summary
 
-
 import tensorboardX
 
 from utils.visualisation.gridshow import gridshow
 
 from utils.dataset_processing import evaluation
-from utils.data import get_dataset  
+from utils.data import get_dataset
 from models import get_network
 from models.common import post_process_output
 
 logging.basicConfig(level=logging.INFO)
 
-def parse_args():
 
+def parse_args():
     parser = argparse.ArgumentParser(description='Train GG-CNN')
 
     # Network
@@ -46,9 +47,9 @@ def parse_args():
 
     parser.add_argument('--camera', type=str, default='realsense',
                         help='Which camera\'s data to use, only effective when using graspnet1b dataset')
-    parser.add_argument('--scale', type=int, default=1, 
-                        help='the scale factor for the original images, only effective when using graspnet1b dataset')                        
-    parser.add_argument('--ggcnn3backend', type=str, default='dla60up', 
+    parser.add_argument('--scale', type=int, default=1,
+                        help='the scale factor for the original images, only effective when using graspnet1b dataset')
+    parser.add_argument('--ggcnn3backend', type=str, default='dla60up',
                         help='the backbone for GGCNN3, only effective when using GGCNN3 network')
     parser.add_argument('--num-workers', type=int, default=8, help='Dataset workers')
     parser.add_argument('--device', type=int, default=0, help='the gpu device number, starting from 0')
@@ -104,11 +105,11 @@ def validate(net, device, val_data, batches_per_epoch):
 
                 loss = lossd['loss']
 
-                results['loss'] += loss.item()/ld
+                results['loss'] += loss.item() / ld
                 for ln, l in lossd['losses'].items():
                     if ln not in results['losses']:
                         results['losses'][ln] = 0
-                    results['losses'][ln] += l.item()/ld
+                    results['losses'][ln] += l.item() / ld
 
                 q_out, ang_out, w_out = post_process_output(lossd['pred']['pos'], lossd['pred']['cos'],
                                                             lossd['pred']['sin'], lossd['pred']['width'])
@@ -151,6 +152,7 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
     # Use batches per epoch to make training on different sized datasets (cornell/jacquard) more equivalent.
     while batch_idx < batches_per_epoch:
         for x, y, _, _, _ in train_data:
+            st = time.time()
             batch_idx += 1
             if batch_idx >= batches_per_epoch:
                 break
@@ -162,7 +164,7 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
             loss = lossd['loss']
 
             if batch_idx % 100 == 0:
-                logging.info('Epoch: {}, Batch: {}, Loss: {:0.4f}'.format(epoch, batch_idx, loss.item()))
+                logging.info('Epoch: {}, Batch: {}, Loss: {:0.4f}, Spent {:0.4f}s'.format(epoch, batch_idx, loss.item(), time.time() - st))
 
             results['loss'] += loss.item()
             for ln, l in lossd['losses'].items():
@@ -216,10 +218,11 @@ def run():
     train_dataset = Dataset(args.dataset_path, start=0.0, end=args.split, ds_rotate=args.ds_rotate,
                             output_size=args.output_size,
                             random_rotate=True, random_zoom=True,
-                            include_depth=args.use_depth, 
+                            include_depth=args.use_depth,
                             include_rgb=args.use_rgb,
                             camera=args.camera,
-                            scale=args.scale)
+                            scale=args.scale,
+                            split='train')
     train_data = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -229,16 +232,17 @@ def run():
     )
 
     val_dataset = Dataset(args.dataset_path, start=args.split, end=1.0, ds_rotate=args.ds_rotate,
-                        output_size=args.output_size,
-                        random_rotate=True, random_zoom=True,
-                        include_depth=args.use_depth, 
-                        include_rgb=args.use_rgb,
-                        camera=args.camera,
-                        scale=args.scale)
+                          output_size=args.output_size,
+                          random_rotate=True, random_zoom=True,
+                          include_depth=args.use_depth,
+                          include_rgb=args.use_rgb,
+                          camera=args.camera,
+                          scale=args.scale,
+                          split='test_seen')
     val_data = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=8,
-        shuffle=False,
+        batch_size=1,  # do not modify
+        shuffle=True,
         num_workers=args.num_workers // 2,
         pin_memory=True
     )
@@ -254,30 +258,11 @@ def run():
         net = ggcnn(input_channels=input_channels, backend=args.ggcnn3backend)
     else:
         net = ggcnn(input_channels=input_channels)
-    device = torch.device("cuda:0")
+    device = torch.device("cuda:{}".format(args.device))
     net = net.to(device)
     optimizer = optim.Adam(net.parameters())
-    scheduler = optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=0.95)
+    scheduler = optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=0.98)
     logging.info('Done')
-
-    # Print model architecture.
-    with open(os.path.join(save_folder, 'arch.txt'), 'w') as f:
-        try:
-            summary(net, (input_channels, args.output_size, args.output_size))
-            sys.stdout = f
-            summary(net, (input_channels, args.output_size, args.output_size))
-            sys.stdout = sys.__stdout__
-        except Exception as e:
-            logging.warning('Summarizing the model architecture failed, no arch.txt will not be saved.')
-            # when error occured, hooks may still be there
-            if args.network == 'ggcnn3':
-                net = ggcnn(input_channels=input_channels, backend=args.ggcnn3backend)
-            else:
-                net = ggcnn(input_channels=input_channels)
-            device = torch.device("cuda:0")
-            net = net.to(device)
-            optimizer = optim.Adam(net.parameters())
-            scheduler = optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=0.95)
 
     best_iou = 0.0
     for epoch in range(args.epochs):
@@ -285,7 +270,7 @@ def run():
         logging.info('Beginning Epoch {:02d}'.format(epoch))
         train_results = train(epoch, net, device, train_data, optimizer, args.batches_per_epoch, vis=args.vis)
         scheduler.step()
-        
+
         # Log training losses to tensorboard
         tb.add_scalar('loss/train_loss', train_results['loss'], epoch)
         for n, l in train_results['losses'].items():
@@ -295,7 +280,7 @@ def run():
         logging.info('Validating...')
         test_results = validate(net, device, val_data, args.val_batches)
         logging.info('%d/%d = %f' % (test_results['correct'], test_results['correct'] + test_results['failed'],
-                                     test_results['correct']/(test_results['correct']+test_results['failed'])))
+                                     test_results['correct'] / (test_results['correct'] + test_results['failed'])))
 
         # Log validation results to tensorbaord
         tb.add_scalar('loss/IOU', test_results['correct'] / (test_results['correct'] + test_results['failed']), epoch)
@@ -311,6 +296,7 @@ def run():
             best_iou = iou
         et = time.time()
         logging.info(f'Epoch-{epoch} took time {et - st} s')
+
 
 if __name__ == '__main__':
     run()

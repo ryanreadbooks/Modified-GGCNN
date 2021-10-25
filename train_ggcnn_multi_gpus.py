@@ -17,6 +17,8 @@ import torch.utils.data
 import torch.optim as optim
 import torch.distributed
 
+from torchsummary import summary
+
 import tensorboardX
 
 from utils.visualisation.gridshow import gridshow
@@ -221,8 +223,8 @@ def run():
 
     # Load Dataset
     logout('Loading {} Dataset...'.format(args.dataset.title()))
-    Dataset = get_dataset(args.dataset)
 
+    Dataset = get_dataset(args.dataset)
     train_dataset = Dataset(args.dataset_path, start=0.0, end=args.split, ds_rotate=args.ds_rotate,
                             output_size=args.output_size,
                             random_rotate=True, random_zoom=True,
@@ -230,29 +232,34 @@ def run():
                             include_rgb=args.use_rgb,
                             camera=args.camera,
                             scale=args.scale)
+
+    train_sampler = torch.utils.data.DistributedSampler(train_dataset)
+
     train_data = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=True
+        pin_memory=True,
+        sampler=train_sampler
     )
 
-    val_dataset = Dataset(args.dataset_path, start=args.split, end=1.0, ds_rotate=args.ds_rotate,
-                          output_size=args.output_size,
-                          random_rotate=True, random_zoom=True,
-                          include_depth=args.use_depth,
-                          include_rgb=args.use_rgb,
-                          camera=args.camera,
-                          scale=args.scale)
-    val_data = torch.utils.data.DataLoader(
-        val_dataset,
-        batch_size=8,
-        shuffle=False,
-        num_workers=args.num_workers // 2,
-        pin_memory=True
-    )
-    logout(f'len of train loader = {len(train_data)}, len of eval loader = {len(val_data)}')
+    if args.local_rank == 0:
+        val_dataset = Dataset(args.dataset_path, start=args.split, end=1.0, ds_rotate=args.ds_rotate,
+                              output_size=args.output_size,
+                              random_rotate=True, random_zoom=True,
+                              include_depth=args.use_depth,
+                              include_rgb=args.use_rgb,
+                              camera=args.camera,
+                              scale=args.scale)
+        val_data = torch.utils.data.DataLoader(
+            val_dataset,
+            batch_size=1,  # do not modify
+            shuffle=False,
+            num_workers=args.num_workers // 2,
+            pin_memory=True
+        )
+
+        logout(f'len of train loader = {len(train_data)}, len of eval loader = {len(val_data)}')
     logout('Done')
 
     # Load the network
@@ -264,13 +271,15 @@ def run():
         net = ggcnn(input_channels=input_channels, backend=args.ggcnn3backend)
     else:
         net = ggcnn(input_channels=input_channels)
+
     devices = list(map(int, args.devices.split(',')))
     device = torch.device("cuda:{}".format(devices[args.local_rank]))
-    torch.distributed.init_process_group(backend='nccl')
-    torch.cuda.set_device(device)
 
+    torch.distributed.init_process_group(backend='nccl')
+    torch.cuda.set_device(device=device)
     net = net.to(device)
     net = torch.nn.parallel.DistributedDataParallel(net, device_ids=[device], output_device=device)
+    net = net.module
     optimizer = optim.Adam(net.parameters())
     scheduler = optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=0.95)
     logout('Done')
@@ -279,12 +288,14 @@ def run():
     for epoch in range(args.epochs):
         st = time.time()
         logout('Beginning Epoch {:02d}'.format(epoch))
+        train_sampler.set_epoch(epoch=epoch)
         train_results = train(epoch, net, device, train_data, optimizer, args.batches_per_epoch, vis=args.vis)
         scheduler.step()
 
         # Run Validation
-        logout('Validating...')
-        test_results = validate(net, device, val_data, args.val_batches)
+        if args.local_rank == 0:
+            logging.info('Validating...')
+            test_results = validate(net, device, val_data, args.val_batches)
 
         if args.local_rank == 0:
             # Log training losses to tensorboard
@@ -306,13 +317,28 @@ def run():
         # Save best performing network
         iou = test_results['correct'] / (test_results['correct'] + test_results['failed'])
         if iou > best_iou or epoch == 0 or (epoch % 10) == 0:
-            torch.save(net, os.path.join(save_folder, 'epoch_%02d_iou_%0.2f' % (epoch, iou)))
-            torch.save(net.state_dict(), os.path.join(save_folder, 'epoch_%02d_iou_%0.2f_statedict.pt' % (epoch, iou)))
+            if args.local_rank == 0:
+                torch.save(net, os.path.join(save_folder, 'epoch_%02d_iou_%0.2f' % (epoch, iou)))
+                torch.save(net.state_dict(), os.path.join(save_folder, 'epoch_%02d_iou_%0.2f_statedict.pt' % (epoch, iou)))
             best_iou = iou
         et = time.time()
         logout(f'Epoch-{epoch} took time {et - st} s')
 
 
 if __name__ == '__main__':
+    """
+    Usage:
+    python -m torch.distributed.launch --nproc_per_node 2 \
+        train_ggcnn_multi_gpus.py --network ggcnn \
+        --dataset graspnet1b \
+        --dataset-path /share/home/ryan/datasets/graspnet-1billion/ \
+        --epochs 2 \
+        --batch-size 16 \
+        --num-workers 20 \
+        --description ggcnn3_gn1b_o384_multi \
+        --output-size 384 
+        --scale 1 \
+        --devices 0,1
+    """
     args = parse_args()
     run()

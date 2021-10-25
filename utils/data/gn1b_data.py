@@ -4,6 +4,7 @@
 
 import logging
 import os
+import copy
 import glob
 
 import torch
@@ -33,12 +34,12 @@ class GraspNet1BDataset(CornellDataset):
         self.g_rgb_files = self._graspnet_instance.rgbPath  # 存放rgb的路径
         self.g_depth_files = self._graspnet_instance.depthPath  # 存放深度图的路径
         self.g_rect_files = []  # 存放抓取标签的路径
-        
+
         for original_rect_grasp_file in self._graspnet_instance.rectLabelPath:
             self.g_rect_files.append(
                 original_rect_grasp_file
-                .replace('rect', 'rect_cornell')
-                .replace('.npy', '.txt')
+                    .replace('rect', 'rect_cornell')
+                    .replace('.npy', '.txt')
             )
 
         logging.info('Graspnet 1Billion dataset created!!')
