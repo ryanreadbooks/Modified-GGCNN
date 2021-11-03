@@ -73,7 +73,7 @@ class GraspDatasetBase(torch.utils.data.Dataset):
         bbs = self.get_gtbb(idx, rot, zoom_factor)
 
         pos_img, ang_img, width_img = bbs.draw((self.output_size, self.output_size))
-        width_img = np.clip(width_img, 0.0, 150.0)/150.0
+        width_img = np.clip(width_img, 0.0, 150.0) / 150.0
 
         if self.include_depth and self.include_rgb:
             x = self.numpy_to_torch(

@@ -13,3 +13,6 @@ slurm_log
 *.slurm
 dev*
 move_rect_to_scenes.py
+/new_output
+/new_tensorboard
+test.py

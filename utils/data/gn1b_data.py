@@ -44,16 +44,19 @@ class GraspNet1BDataset(CornellDataset):
 
         logging.info('Graspnet 1Billion dataset created!!')
 
-    def _get_crop_attrs(self, idx):
+    def _get_crop_attrs(self, idx, return_gtbbs=False):
         gtbbs = grasp.GraspRectangles.load_from_cornell_file(self.g_rect_files[idx], scale=self.scale)
         center = gtbbs.center
         left = max(0, min(center[1] - self.output_size // 2, int(1280 // self.scale) - self.output_size))
         top = max(0, min(center[0] - self.output_size // 2, int(720 // self.scale) - self.output_size))
-        return center, left, top
+        if not return_gtbbs:
+            return center, left, top
+        else:
+            return center, left, top, gtbbs
 
     def get_gtbb(self, idx, rot=0, zoom=1):
-        gtbbs = grasp.GraspRectangles.load_from_cornell_file(self.g_rect_files[idx], scale=self.scale)
-        center, left, top = self._get_crop_attrs(idx)
+        # gtbbs = grasp.GraspRectangles.load_from_cornell_file(self.g_rect_files[idx], scale=self.scale)
+        center, left, top, gtbbs = self._get_crop_attrs(idx, return_gtbbs=True)
         gtbbs.rotate(rot, center)
         gtbbs.offset((-top, -left))
         gtbbs.zoom(zoom, (self.output_size // 2, self.output_size // 2))

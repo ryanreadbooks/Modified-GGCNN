@@ -18,7 +18,7 @@ from utils.dataset_processing.grasp2 import Grasp
 from utils.data.grasp_data import GraspDatasetBase
 from models import *
 
-# MODEL_FILE = 'output/models/211017_1513_/epoch_49_iou_0.77'   # ggcnn
+# MODEL_FILE = 'output/models/211017_1513_/ggcnn_wo_rgb_epoch_49_iou_0.77'   # ggcnn
 MODEL_FILE = 'output/models/211017_1535_/epoch_04_iou_0.94'   # ggcnn2
 here = path.dirname(path.abspath(__file__))
 sys.path.append(here)

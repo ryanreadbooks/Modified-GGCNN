@@ -211,15 +211,21 @@ def run():
     # Load Dataset
     logging.info('Loading {} Dataset...'.format(args.dataset.title()))
     Dataset = get_dataset(args.dataset)
-
-    train_dataset = Dataset(args.dataset_path, start=0.0, end=args.split, ds_rotate=args.ds_rotate,
-                            output_size=args.output_size,
-                            random_rotate=True, random_zoom=True,
-                            include_depth=args.use_depth,
-                            include_rgb=args.use_rgb,
-                            camera=args.camera,
-                            scale=args.scale,
-                            split='train')
+    if args.dataset == 'graspnet1b':
+        train_dataset = Dataset(args.dataset_path, start=0.0, end=args.split, ds_rotate=args.ds_rotate,
+                                output_size=args.output_size,
+                                random_rotate=True, random_zoom=True,
+                                include_depth=args.use_depth,
+                                include_rgb=args.use_rgb,
+                                camera=args.camera,
+                                scale=args.scale,
+                                split='train')
+    else:
+        train_dataset = Dataset(args.dataset_path, start=0.0, end=args.split, ds_rotate=args.ds_rotate,
+                                output_size=args.output_size,
+                                random_rotate=True, random_zoom=True,
+                                include_depth=args.use_depth,
+                                include_rgb=args.use_rgb)
     train_data = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -227,15 +233,21 @@ def run():
         num_workers=args.num_workers,
         pin_memory=True
     )
-
-    val_dataset = Dataset(args.dataset_path, start=args.split, end=1.0, ds_rotate=args.ds_rotate,
-                          output_size=args.output_size,
-                          random_rotate=True, random_zoom=True,
-                          include_depth=args.use_depth,
-                          include_rgb=args.use_rgb,
-                          camera=args.camera,
-                          scale=args.scale,
-                          split='test_seen')
+    if args.dataset == 'graspnet1b':
+        val_dataset = Dataset(args.dataset_path, start=args.split, end=1.0, ds_rotate=args.ds_rotate,
+                              output_size=args.output_size,
+                              random_rotate=True, random_zoom=True,
+                              include_depth=args.use_depth,
+                              include_rgb=args.use_rgb,
+                              camera=args.camera,
+                              scale=args.scale,
+                              split='test_seen')
+    else:
+        val_dataset = Dataset(args.dataset_path, start=args.split, end=1.0, ds_rotate=args.ds_rotate,
+                              output_size=args.output_size,
+                              random_rotate=True, random_zoom=True,
+                              include_depth=args.use_depth,
+                              include_rgb=args.use_rgb)
     val_data = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=1,  # do not modify

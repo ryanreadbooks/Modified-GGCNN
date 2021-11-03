@@ -1,7 +1,9 @@
 import argparse
 import logging
+import os.path
 
-import torch.utils.data
+import torch
+import torch.utils.data as data
 
 from models.common import post_process_output
 from utils.dataset_processing import evaluation, grasp
@@ -26,6 +28,8 @@ def parse_args():
     parser.add_argument('--ds-rotate', type=float, default=0.0,
                         help='Shift the start point of the dataset to use a different test/train split')
     parser.add_argument('--num-workers', type=int, default=8, help='Dataset workers')
+    parser.add_argument('--output-size', type=int, default=300,
+                        help='the output size of the network, determining the cropped size of dataset images')
 
     parser.add_argument('--n-grasps', type=int, default=1, help='Number of grasps to consider per image')
     parser.add_argument('--iou-eval', action='store_true', help='Compute success based on IoU metric.')
@@ -48,11 +52,13 @@ if __name__ == '__main__':
     # Load Network
     net = torch.load(args.network)
     device = torch.device("cuda:0")
-
+    net.to(device)
+    net.eval()
     # Load Dataset
     logging.info('Loading {} Dataset...'.format(args.dataset.title()))
     Dataset = get_dataset(args.dataset)
-    test_dataset = Dataset(args.dataset_path, start=args.split, end=1.0, ds_rotate=args.ds_rotate,
+    test_dataset = Dataset(file_path=args.dataset_path, output_size=args.output_size,
+                           start=args.split, end=1.0, ds_rotate=args.ds_rotate,
                            random_rotate=args.augment, random_zoom=args.augment,
                            include_depth=args.use_depth, include_rgb=args.use_rgb)
     test_data = torch.utils.data.DataLoader(
@@ -103,9 +109,17 @@ if __name__ == '__main__':
                                        ang_img, no_grasps=args.n_grasps, grasp_width_img=width_img)
 
     if args.iou_eval:
-        logging.info('IOU Results: %d/%d = %f' % (results['correct'],
-                              results['correct'] + results['failed'],
-                              results['correct'] / (results['correct'] + results['failed'])))
+        result_info = 'IOU Results: %d/%d = %f' % (
+        results['correct'], results['correct'] + results['failed'], results['correct'] / (results['correct'] + results['failed']))
+        logging.info(result_info)
+        network_name = os.path.basename(args.network)
+        save_dir = os.path.join('eval_results', f'{network_name}.txt')
+        with open(save_dir, 'w') as f:
+            f.write(f'Evaluation result for network {args.network}\n')
+            f.write(f'Evaluation on {args.dataset} dataset\n')
+            f.write(f'Result info is below ===> \n')
+            f.write(result_info)
+            f.write('\n')
 
     if args.jacquard_output:
         logging.info('Jacquard output saved to {}'.format(jo_fn))

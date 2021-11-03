@@ -1,0 +1,4 @@
+Evaluation result for network output/models/ggcnn/dla/ggcnn3_dla34up_w_rgb_epoch_24_iou_0.88
+Evaluation on cornell dataset
+Result info is below ===> 
+IOU Results: 83/89 = 0.932584
