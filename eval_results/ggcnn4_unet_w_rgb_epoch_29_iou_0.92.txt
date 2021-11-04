@@ -1,0 +1,4 @@
+Evaluation result for network output/models/ggcnn/unet/ggcnn4_unet_w_rgb_epoch_29_iou_0.92
+Evaluation on cornell dataset
+Result info is below ===> 
+IOU Results: 80/89 = 0.898876

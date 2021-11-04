@@ -50,8 +50,9 @@ if __name__ == '__main__':
     args = parse_args()
 
     # Load Network
-    net = torch.load(args.network)
     device = torch.device("cuda:0")
+    # device = torch.device("cpu")
+    net = torch.load(args.network, map_location=device)
     net.to(device)
     net.eval()
     # Load Dataset

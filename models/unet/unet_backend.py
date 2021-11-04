@@ -82,7 +82,7 @@ class UNet(nn.Module):
         self.up1 = Up(1024, 256)
         self.up2 = Up(512, 128)
         self.up3 = Up(256, 64)
-        self.up4 = Up(128, 64)
+        self.up4 = Up(128, output_channels)
 
     def forward(self, img):
         """Forward pass."""

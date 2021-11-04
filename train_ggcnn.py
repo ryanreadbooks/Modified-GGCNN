@@ -270,7 +270,7 @@ def run():
     device = torch.device("cuda:{}".format(args.device))
     net = net.to(device)
     optimizer = optim.Adam(net.parameters())
-    scheduler = optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=0.98)
+    scheduler = optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=0.999)
     logging.info('Done')
 
     best_iou = 0.0

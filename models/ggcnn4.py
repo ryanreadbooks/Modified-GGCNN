@@ -15,7 +15,7 @@ class GGCNN4(nn.Module):
     def __init__(self, input_channels=1):
         super(GGCNN4, self).__init__()
 
-        self.feat_backbone = UNet(input_channels, output_channels=16)
+        self.features = UNet(input_channels, output_channels=16)
 
         self.pos_output = nn.Sequential(
             nn.Conv2d(16, 16, kernel_size=1),
@@ -71,7 +71,7 @@ class GGCNN4(nn.Module):
                 'width_loss': width_loss
             },
             'pred': {
-                'pos': pos_pred,
+                'pos': pos_pred.sigmoid(),
                 'cos': cos_pred,
                 'sin': sin_pred,
                 'width': width_pred
